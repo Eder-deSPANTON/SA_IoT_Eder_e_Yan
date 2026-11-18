@@ -1,0 +1,366 @@
+Antigo código do Projeto
+
+#include <Servo.h>
+#include <Adafruit_LiquidCrystal.h>
+
+// CONFIGURACAO DOS COMPONENTES
+
+// Sensor ultrassonico HC-SR04
+const int TRIG = 3;
+const int ECHO = 2;
+
+// Buzzer
+const int BUZZER = 7;
+
+// Servo motor
+const int SERVO_PIN = 6;
+
+// LEDs vermelhos
+const int LED_1 = 8;
+const int LED_2 = 9;
+
+// LCD 16x2 I2C (Tinkercad)
+Adafruit_LiquidCrystal lcd(0);
+
+// Servo motor
+Servo cancela;
+
+
+// CONFIGURACOES DO SISTEMA
+
+// Distancia para detectar o trem
+const int DISTANCIA_DETECCAO = 10;
+
+// Posicoes da cancela
+const int ANGULO_ABERTO = 0;
+const int ANGULO_FECHADO = 90;
+
+// Tempo para liberar a passagem
+const unsigned long TEMPO_ABERTURA = 7000;
+
+// Tempo de piscada dos LEDs
+const unsigned long TEMPO_PISCADA = 500;
+
+// Tempos do buzzer
+const unsigned long TEMPO_SOM = 150;
+const unsigned long TEMPO_SILENCIO = 250;
+
+// Frequencias do buzzer
+const int FREQUENCIA_AGUDA = 1200;
+const int FREQUENCIA_GRAVE = 900;
+
+// Confirmacoes sem deteccao
+const int CONFIRMACOES_SEM_TREM = 3;
+
+
+// VARIAVEIS DO SISTEMA
+
+bool tremDetectado = false;
+bool cancelaFechada = false;
+bool aguardandoAbertura = false;
+
+// Controle dos LEDs
+bool estadoLED = false;
+
+unsigned long ultimaPiscada = 0;
+
+// Controle do buzzer
+bool buzzerLigado = false;
+bool tomAgudo = true;
+
+unsigned long inicioBip = 0;
+
+// Controle da contagem
+int leiturasSemTrem = 0;
+
+unsigned long inicioSemDeteccao = 0;
+
+
+// CONFIGURACAO INICIAL
+
+void setup() {
+  Serial.begin(9600);
+
+  // Sensor ultrassonico
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  // Buzzer
+  pinMode(BUZZER, OUTPUT);
+
+  // LEDs
+  pinMode(LED_1, OUTPUT);
+  pinMode(LED_2, OUTPUT);
+
+  digitalWrite(LED_1, LOW);
+  digitalWrite(LED_2, LOW);
+
+  noTone(BUZZER);
+
+  // Servo motor
+  cancela.attach(SERVO_PIN);
+  cancela.write(ANGULO_ABERTO);
+
+  // LCD I2C
+  lcd.begin(16, 2);
+  lcd.setBacklight(1);
+
+  // Mensagem inicial
+  mostrarPassagemLiberada();
+
+  Serial.println("Sistema ferroviario iniciado!");
+}
+
+void loop() {
+
+  // Mede a distancia do sensor
+  long distancia = medirDistancia();
+
+  Serial.print("Distancia: ");
+
+  if (distancia == 0) {
+
+    Serial.println("Sem deteccao");
+
+  } else {
+
+    Serial.print(distancia);
+    Serial.println(" cm");
+  }
+
+
+  // Verifica se existe um trem proximo
+  tremDetectado = (distancia >= 2 &&
+                   distancia <= DISTANCIA_DETECCAO);
+
+
+  // ESTADO 1 - TREM DETECTADO
+
+  if (tremDetectado) {
+
+    // Reinicia as confirmacoes sem deteccao
+    leiturasSemTrem = 0;
+
+    // Cancela a contagem de abertura
+    aguardandoAbertura = false;
+
+    // Fecha a cancela se estiver aberta
+    if (!cancelaFechada) {
+
+      cancela.write(ANGULO_FECHADO);
+
+      cancelaFechada = true;
+
+      // Reinicia o controle sonoro
+      inicioBip = millis();
+      buzzerLigado = false;
+      tomAgudo = true;
+
+      // Reinicia o controle luminoso
+      ultimaPiscada = millis();
+      estadoLED = false;
+
+      // Atualiza o LCD
+      mostrarTremPassando();
+
+      Serial.println("TREM DETECTADO!");
+    }
+
+  }
+
+  // ESTADO 2 - TREM NAO DETECTADO
+
+  else if (cancelaFechada) {
+
+    // Confirma tres leituras sem deteccao
+    if (!aguardandoAbertura) {
+
+      leiturasSemTrem++;
+
+      if (leiturasSemTrem >= CONFIRMACOES_SEM_TREM) {
+
+        inicioSemDeteccao = millis();
+
+        aguardandoAbertura = true;
+
+        Serial.println("Aguardando 7 segundos...");
+      }
+
+    }
+
+
+    // Verifica se passaram 7 segundos
+    if (aguardandoAbertura &&
+        millis() - inicioSemDeteccao >= TEMPO_ABERTURA) {
+
+      // Levanta a cancela
+      cancela.write(ANGULO_ABERTO);
+
+      cancelaFechada = false;
+
+      aguardandoAbertura = false;
+
+      leiturasSemTrem = 0;
+
+      // Desliga os LEDs
+      digitalWrite(LED_1, LOW);
+      digitalWrite(LED_2, LOW);
+
+      // Desliga o buzzer
+      noTone(BUZZER);
+      buzzerLigado = false;
+
+      // Atualiza o LCD
+      mostrarPassagemLiberada();
+
+      Serial.println("PASSAGEM LIBERADA!");
+    }
+
+  }
+
+  // CONTROLE DOS COMPONENTES
+
+  controlarLEDs();
+
+  controlarBuzzer();
+
+  delay(50);
+}
+
+// MEDICAO DO SENSOR ULTRASSONICO
+
+long medirDistancia() {
+
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG, LOW);
+
+  long tempo = pulseIn(ECHO, HIGH, 20000);
+
+  // Retorna zero quando nao recebe eco
+  if (tempo == 0) {
+
+    return 0;
+  }
+  
+  // Converte o tempo em distancia (cm)
+  return tempo / 58;
+
+}
+
+// CONTROLE DOS LEDS INTERMITENTES
+
+void controlarLEDs() {
+
+  // Desliga os LEDs se a cancela estiver aberta
+  if (!cancelaFechada) {
+
+    digitalWrite(LED_1, LOW);
+    digitalWrite(LED_2, LOW);
+
+    return;
+  }
+
+
+  // Verifica se chegou o momento da piscada
+  if (millis() - ultimaPiscada >= TEMPO_PISCADA) {
+
+    ultimaPiscada = millis();
+    estadoLED = !estadoLED;
+
+
+    // Alterna os LEDs
+    if (estadoLED) {
+
+      digitalWrite(LED_1, HIGH);
+      digitalWrite(LED_2, LOW);
+
+    } else {
+
+      digitalWrite(LED_1, LOW);
+      digitalWrite(LED_2, HIGH);
+    }
+
+  }
+
+}
+
+// CONTROLE DO BUZZER
+
+void controlarBuzzer() {
+
+  // Desliga o buzzer quando a passagem estiver liberada
+  if (!cancelaFechada) {
+
+    noTone(BUZZER);
+
+    buzzerLigado = false;
+
+    return;
+  }
+
+
+  // Liga o buzzer depois do intervalo de silencio
+  if (!buzzerLigado &&
+      millis() - inicioBip >= TEMPO_SILENCIO) {
+
+    // Alterna entre duas frequencias
+    if (tomAgudo) {
+
+      tone(BUZZER, FREQUENCIA_AGUDA);
+      
+    } else {
+
+      tone(BUZZER, FREQUENCIA_GRAVE);
+    }
+
+    // Alterna o proximo tom
+    tomAgudo = !tomAgudo;
+
+    buzzerLigado = true;
+
+    inicioBip = millis();
+  }
+
+
+  // Desliga o buzzer depois do som
+  else if (buzzerLigado &&
+           millis() - inicioBip >= TEMPO_SOM) {
+
+    noTone(BUZZER);
+
+    buzzerLigado = false;
+
+    inicioBip = millis();
+  }
+
+}
+
+// MENSAGENS DO LCD
+
+void mostrarTremPassando() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("TREM PASSANDO");
+
+  lcd.setCursor(0, 1);
+  lcd.print("AGUARDE...");
+}
+
+
+void mostrarPassagemLiberada() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("PASSAGEM");
+
+  lcd.setCursor(0, 1);
+  lcd.print("LIBERADA");
+}

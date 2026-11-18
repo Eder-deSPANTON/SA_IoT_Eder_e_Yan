@@ -1,0 +1,634 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+
+// =====================================
+// CONFIGURACAO DO OLED
+// =====================================
+
+
+#define LARGURA 128
+#define ALTURA 64
+
+
+#define OLED_RESET -1
+#define ENDERECO_OLED 0x3C
+
+
+Adafruit_SSD1306 display(
+  LARGURA,
+  ALTURA,
+  &Wire,
+  OLED_RESET
+);
+
+
+bool oledDisponivel = false;
+
+
+// =====================================
+// PINOS DOS COMPONENTES
+// =====================================
+
+
+const int TRIG = 3;
+const int ECHO = 2;
+
+
+const int BUZZER = 7;
+
+
+const int LED1 = 8;
+const int LED2 = 9;
+
+
+const int PINO_SERVO = 6;
+
+
+Servo cancela;
+
+
+// =====================================
+// CONFIGURACOES
+// =====================================
+
+
+const float DISTANCIA_MINIMA = 5.0;
+const float DISTANCIA_MAXIMA = 20.0;
+
+
+const int ANGULO_ABERTO = 0;
+const int ANGULO_FECHADO = 90;
+
+
+const unsigned long TEMPO_ESPERA = 15000;
+
+
+const unsigned long INTERVALO_SENSOR = 50;
+const unsigned long INTERVALO_LED = 500;
+const unsigned long INTERVALO_TELA = 250;
+
+
+const unsigned long TEMPO_SOM = 150;
+const unsigned long TEMPO_SILENCIO = 250;
+
+
+const int frequencias[] = {1200, 900};
+
+
+// =====================================
+// VARIAVEIS DE CONTROLE
+// =====================================
+
+
+float distancia = -1;
+
+
+bool cancelaFechada = false;
+bool aguardandoAbertura = false;
+
+
+bool estadoLED = false;
+bool somLigado = false;
+
+
+byte leiturasSemTrem = 0;
+byte indiceFrequencia = 0;
+
+
+unsigned long ultimaLeitura = 0;
+unsigned long ultimoLED = 0;
+unsigned long ultimoBuzzer = 0;
+unsigned long ultimaTela = 0;
+unsigned long inicioEspera = 0;
+
+
+// =====================================
+// INICIALIZAR OLED
+// =====================================
+
+
+void iniciarOLED() {
+
+
+  Wire.begin();
+
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, ENDERECO_OLED)) {
+
+
+    oledDisponivel = false;
+
+
+    Serial.println(F("ERRO AO INICIAR OLED!"));
+    Serial.println(F("Verifique fiacao/endereco ou falta de RAM"));
+
+
+    return;
+  }
+
+
+  oledDisponivel = true;
+
+
+  display.clearDisplay();
+
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+
+  display.setCursor(0, 10);
+  display.println(F("OLA!"));
+
+
+  display.setCursor(0, 30);
+  display.println(F("SISTEMA FERROVIARIO"));
+
+
+  display.setCursor(0, 50);
+  display.println(F("INICIANDO..."));
+
+
+  display.display();
+
+
+  Serial.println(F("OLED INICIADO COM SUCESSO!"));
+}
+
+
+// =====================================
+// MEDIR DISTANCIA
+// =====================================
+
+
+float medirDistancia() {
+
+
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+
+
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+
+
+  digitalWrite(TRIG, LOW);
+
+
+  long duracao = pulseIn(ECHO, HIGH, 20000);
+
+
+  if (duracao == 0) {
+    return -1;
+  }
+
+
+  return duracao * 0.0343 / 2;
+}
+
+
+// =====================================
+// FECHAR CANCELA
+// =====================================
+
+
+void fecharCancela() {
+
+
+  cancela.write(ANGULO_FECHADO);
+
+
+  cancelaFechada = true;
+  aguardandoAbertura = false;
+
+
+  leiturasSemTrem = 0;
+
+
+  estadoLED = false;
+
+
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+
+
+  ultimoLED = millis();
+
+
+  indiceFrequencia = 0;
+
+
+  tone(BUZZER, frequencias[indiceFrequencia]);
+
+
+  somLigado = true;
+  ultimoBuzzer = millis();
+
+
+  Serial.println(F("TREM DETECTADO!"));
+  Serial.println(F("CANCELA FECHADA!"));
+}
+
+
+// =====================================
+// ABRIR CANCELA
+// =====================================
+
+
+void abrirCancela() {
+
+
+  cancela.write(ANGULO_ABERTO);
+
+
+  cancelaFechada = false;
+  aguardandoAbertura = false;
+
+
+  leiturasSemTrem = 0;
+
+
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+
+
+  estadoLED = false;
+
+
+  noTone(BUZZER);
+
+
+  somLigado = false;
+
+
+  Serial.println(F("PASSAGEM LIBERADA!"));
+  Serial.println(F("CANCELA ABERTA!"));
+}
+
+
+// =====================================
+// CONTROLAR LEDS
+// =====================================
+
+
+void controlarLEDs() {
+
+
+  if (!cancelaFechada) {
+
+
+    digitalWrite(LED1, LOW);
+    digitalWrite(LED2, LOW);
+
+
+    return;
+  }
+
+
+  unsigned long agora = millis();
+
+
+  if (agora - ultimoLED >= INTERVALO_LED) {
+
+
+    ultimoLED = agora;
+
+
+    estadoLED = !estadoLED;
+
+
+    digitalWrite(LED1, estadoLED);
+    digitalWrite(LED2, !estadoLED);
+  }
+}
+
+
+// =====================================
+// CONTROLAR BUZZER
+// =====================================
+
+
+void controlarBuzzer() {
+
+
+  if (!cancelaFechada) {
+
+
+    noTone(BUZZER);
+
+
+    return;
+  }
+
+
+  unsigned long agora = millis();
+
+
+  if (somLigado) {
+
+
+    if (agora - ultimoBuzzer >= TEMPO_SOM) {
+
+
+      noTone(BUZZER);
+
+
+      somLigado = false;
+      ultimoBuzzer = agora;
+    }
+
+
+  } else {
+
+
+    if (agora - ultimoBuzzer >= TEMPO_SILENCIO) {
+
+
+      indiceFrequencia = (indiceFrequencia + 1) % 2;
+
+
+      tone(BUZZER, frequencias[indiceFrequencia]);
+
+
+      somLigado = true;
+      ultimoBuzzer = agora;
+    }
+  }
+}
+
+
+// =====================================
+// ATUALIZAR OLED
+// =====================================
+
+
+void atualizarOLED() {
+
+
+  if (!oledDisponivel) {
+    return;
+  }
+
+
+  display.clearDisplay();
+
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+
+  // CABECALHO
+
+
+  display.setCursor(0, 0);
+  display.println(F("SISTEMA FERROVIARIO"));
+
+
+  display.drawLine(0, 12, 127, 12, SSD1306_WHITE);
+
+
+  // DISTANCIA
+
+
+  display.setCursor(0, 20);
+
+
+  display.print(F("Distancia: "));
+
+
+  if (distancia < 0) {
+
+
+    display.println(F("--"));
+
+
+  } else {
+
+
+    display.print(distancia, 1);
+    display.println(F(" cm"));
+  }
+
+
+  // ESTADO DO SISTEMA
+
+
+  display.setCursor(0, 38);
+
+
+  if (!cancelaFechada) {
+
+
+    display.println(F("PASSAGEM LIVRE"));
+
+
+    display.setCursor(0, 52);
+    display.println(F("Cancela aberta"));
+
+
+  } else if (aguardandoAbertura) {
+
+
+    unsigned long decorrido = millis() - inicioEspera;
+
+
+    unsigned long restante = 0;
+
+
+    if (decorrido < TEMPO_ESPERA) {
+
+
+      restante = (TEMPO_ESPERA - decorrido + 999) / 1000;
+    }
+
+
+    display.println(F("AGUARDANDO..."));
+
+
+    display.setCursor(0, 52);
+
+
+    display.print(F("Abre em "));
+    display.print(restante);
+    display.println(F(" s"));
+
+
+  } else {
+
+
+    display.println(F("TREM DETECTADO!"));
+
+
+    display.setCursor(0, 52);
+    display.println(F("Cancela fechada"));
+  }
+
+
+  display.display();
+}
+
+
+// =====================================
+// SETUP
+// =====================================
+
+
+void setup() {
+
+
+  Serial.begin(9600);
+
+
+  // OLED primeiro, para garantir que o buffer de 1024 bytes seja alocado
+  iniciarOLED();
+
+
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+
+  digitalWrite(TRIG, LOW);
+
+
+  pinMode(BUZZER, OUTPUT);
+
+
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+
+
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+
+
+  cancela.attach(PINO_SERVO);
+  cancela.write(ANGULO_ABERTO);
+
+
+  Serial.println(F("========================"));
+  Serial.println(F("SISTEMA FERROVIARIO"));
+  Serial.println(F("SISTEMA INICIADO!"));
+  Serial.println(F("========================"));
+
+
+  delay(1000);
+
+
+  atualizarOLED();
+}
+
+
+// =====================================
+// LOOP PRINCIPAL
+// =====================================
+
+
+void loop() {
+
+
+  unsigned long agora = millis();
+
+
+  // LEITURA DO SENSOR
+
+
+  if (agora - ultimaLeitura >= INTERVALO_SENSOR) {
+
+
+    ultimaLeitura = agora;
+
+
+    distancia = medirDistancia();
+
+
+    bool tremDetectado =
+      distancia >= DISTANCIA_MINIMA &&
+      distancia <= DISTANCIA_MAXIMA;
+
+
+    if (tremDetectado) {
+
+
+      leiturasSemTrem = 0;
+
+
+      if (!cancelaFechada) {
+
+
+        fecharCancela();
+
+
+      } else if (aguardandoAbertura) {
+
+
+        aguardandoAbertura = false;
+
+
+        Serial.println(F("TREM DETECTADO NOVAMENTE!"));
+        Serial.println(F("CONTAGEM CANCELADA!"));
+      }
+    }
+
+
+    else if (cancelaFechada) {
+
+
+      if (leiturasSemTrem < 3) {
+
+
+        leiturasSemTrem++;
+      }
+
+
+      if (leiturasSemTrem >= 3 && !aguardandoAbertura) {
+
+
+        aguardandoAbertura = true;
+
+
+        inicioEspera = agora;
+
+
+        Serial.println(F("TREM NAO DETECTADO!"));
+        Serial.println(F("AGUARDANDO 7 SEGUNDOS..."));
+      }
+    }
+  }
+
+
+  // CONTAGEM PARA ABRIR A CANCELA
+
+
+  if (aguardandoAbertura) {
+
+
+    if (millis() - inicioEspera >= TEMPO_ESPERA) {
+
+
+      abrirCancela();
+    }
+  }
+
+
+  // CONTROLE DOS COMPONENTES
+
+
+  controlarLEDs();
+  controlarBuzzer();
+
+
+  // ATUALIZACAO DO OLED
+
+
+  if (millis() - ultimaTela >= INTERVALO_TELA) {
+
+
+    ultimaTela = millis();
+
+
+    atualizarOLED();
+  }
+}
